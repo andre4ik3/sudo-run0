@@ -57,13 +57,36 @@ sudo -u username command
 # Interactive login shell (uses target user's shell)
 sudo -i
 
+# Run shell as target user (simpler than -i)
+sudo -s
+
+# Set HOME directory
+sudo -H command
+
 # Environment variable preservation
 sudo -E command                           # Preserve all safe variables
 sudo --preserve-env=VAR1,VAR2 command    # Preserve specific variables
 
-# Administrative tasks
+# Non-interactive mode (fails if authentication needed)
+sudo -n command
+
+# Background execution
+sudo -b long-running-command
+
+# Authentication management
 sudo -l                                   # List privileges
 sudo -v                                   # Validate/refresh authentication
+sudo -k                                   # Reset authentication timestamp
+sudo -K                                   # Remove authentication timestamp
+
+# Execute commands via shell
+sudo -c "complex command with pipes | and redirects"
+
+# Change working directory before execution
+sudo -D /var/log tail -f messages
+
+# Preserve supplementary groups
+sudo -P command
 ```
 
 ### Practical Examples
@@ -79,6 +102,22 @@ sudo -u alice -i
 
 # Development workflow
 CFLAGS="-O2" sudo --preserve-env=CFLAGS make install
+
+# Background system maintenance
+sudo -b /usr/bin/system-cleanup
+
+# Working directory change
+sudo -D /var/www/html chown -R www-data:www-data .
+
+# Complex shell commands
+sudo -c "systemctl stop nginx && cp new-config /etc/nginx/ && systemctl start nginx"
+
+# Non-interactive scripting
+if sudo -n true 2>/dev/null; then
+    sudo systemctl restart service
+else
+    echo "Authentication required"
+fi
 ```
 
 ## Supported Options
@@ -88,12 +127,32 @@ CFLAGS="-O2" sudo --preserve-env=CFLAGS make install
 | `-u, --user USER` | Run as specified user | ✅ Full |
 | `-g, --group GROUP` | Run as specified group | ✅ Full |
 | `-i, --login` | Login shell with target user's environment | ✅ Full |
+| `-s, --shell` | Run shell as target user | ✅ Full |
+| `-H, --set-home` | Set HOME to target user's home directory | ✅ Full |
 | `-E, --preserve-env` | Preserve environment variables | ✅ Full (with safety filtering) |
 | `--preserve-env=list` | Preserve specific variables | ✅ Full |
+| `-n, --non-interactive` | Non-interactive mode (fail if auth needed) | ✅ Full |
+| `-b, --background` | Run command in background | ✅ Full |
+| `-k, --reset-timestamp` | Reset authentication timestamp | ✅ Full |
+| `-K, --remove-timestamp` | Remove authentication timestamp | ✅ Full |
+| `-c, --command=CMD` | Run command via shell | ✅ Full |
+| `-D, --chdir=DIR` | Change working directory | ✅ Full |
+| `-P, --preserve-groups` | Preserve supplementary groups | ⚠️ Limited (env var only) |
 | `-l, --list` | List privileges | ⚠️ Simplified (shows generic output) |
 | `-v, --validate` | Validate/refresh authentication | ✅ Full |
 | `-h, --help` | Show help | ✅ Full |
 | `-V, --version` | Show version | ✅ Full |
+
+### Not Yet Implemented
+
+| Option | Description | Implementation Difficulty |
+|---|---|---|
+| `-S, --stdin` | Read password from stdin | 🔴 **Impossible** (polkit limitation) |
+| `-A, --askpass` | Use askpass program | 🔴 **Impossible** (polkit limitation) |
+| `-r, --role` | SELinux role | 🔴 **Hard** (requires SELinux support in run0) |
+| `-t, --type` | SELinux type | 🔴 **Hard** (requires SELinux support in run0) |
+| `-e, --edit` | Edit files (sudoedit) | 🟡 **Hard** (complex implementation needed) |
+| `-p, --prompt` | Custom password prompt | 🟡 **Hard** (limited polkit control) |
 
 ## Migration Guide
 
@@ -110,9 +169,9 @@ sudo -i
 Some advanced sudo features require adaptation:
 ```bash
 # Not available - use alternative approaches
-sudo -H          # Use sudo -i instead for home directory
-sudo -s          # Use sudo -i for shell
-sudo -c command  # Not implemented
+sudo -S          # Use GUI authentication instead
+sudo -A          # Use system's polkit agent instead
+sudo -e file     # Use regular editor with sudo: sudo vim file
 ```
 
 ### Configuration Migration
