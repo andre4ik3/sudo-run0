@@ -10,12 +10,8 @@ get_user_shell() {
         username="root"
     fi
     
-    # Try getent first (more portable), fallback to /etc/passwd
-    if command -v getent >/dev/null 2>&1; then
-        getent passwd "$username" 2>/dev/null | cut -d: -f7
-    else
-        grep "^$username:" /etc/passwd 2>/dev/null | cut -d: -f7
-    fi
+    # Use getent to get user information
+    getent passwd "$username" 2>/dev/null | cut -d: -f7
 }
 
 # Collect environment variables for preservation
@@ -208,9 +204,13 @@ parse_args() {
     if [ "$login_shell" = true ]; then
         # Get the target user's shell
         target_shell=$(get_user_shell "$target_user")
-        if [ -z "$target_shell" ] || [ "$target_shell" = "/sbin/nologin" ] || [ "$target_shell" = "/bin/false" ]; then
-            target_shell="/bin/sh"
-        fi
+        
+        # Check if shell is invalid by examining the basename
+        case "$(basename "$target_shell")" in
+            nologin|false|"")
+                target_shell="/bin/sh"
+                ;;
+        esac
         
         # Set up login shell environment
         run0_args="$run0_args --setenv=SHELL=$target_shell"
@@ -219,12 +219,8 @@ parse_args() {
         if [ "$target_user" = "root" ]; then
             run0_args="$run0_args --setenv=HOME=/root"
         else
-            # Try to get user's home directory
-            if command -v getent >/dev/null 2>&1; then
-                target_home=$(getent passwd "$target_user" 2>/dev/null | cut -d: -f6)
-            else
-                target_home=$(grep "^$target_user:" /etc/passwd 2>/dev/null | cut -d: -f6)
-            fi
+            # Get user's home directory
+            target_home=$(getent passwd "$target_user" 2>/dev/null | cut -d: -f6)
             if [ -n "$target_home" ]; then
                 run0_args="$run0_args --setenv=HOME=$target_home"
             fi

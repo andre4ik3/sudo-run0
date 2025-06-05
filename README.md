@@ -122,7 +122,8 @@ sudo -u bob -E --preserve-env=DISPLAY xterm  # Run xterm as bob with display
 - **Security Model**: Inherits run0's service isolation and polkit authentication
 - **No SetUID Required**: Uses systemd's privilege escalation mechanism
 - **Environment Filtering**: Automatically filters out problematic variables to prevent command line corruption
-- **Shell Detection**: Uses `getent` or `/etc/passwd` to determine target user's shell
+- **Shell Detection**: Uses `getent` to determine target user's shell with fallback logic
+- **NixOS Compatibility**: Handles non-standard binary paths by checking basenames instead of full paths
 - **Compatibility**: Works with systemd 256+ (when run0 was introduced)
 
 ## Limitations
@@ -143,10 +144,11 @@ For safety and compatibility, the following variables are filtered out when usin
 
 ### Login Shell Implementation
 The `-i` option:
-1. Looks up the target user's shell from the system user database
-2. Sets `SHELL` environment variable to the target user's shell
-3. Sets `HOME` to the target user's home directory
-4. Falls back to `/bin/sh` if target user has no valid shell
+1. Looks up the target user's shell from the system user database using `getent`
+2. Validates the shell by checking the basename (works on both traditional Unix and NixOS)
+3. Sets `SHELL` environment variable to the target user's shell
+4. Sets `HOME` to the target user's home directory
+5. Falls back to `/bin/sh` if target user has invalid shell (nologin, false, etc.)
 
 ## Contributing
 
