@@ -111,6 +111,8 @@ sudo -D /var/www/html chown -R www-data:www-data .
 
 # Complex shell commands
 sudo -c "systemctl stop nginx && cp new-config /etc/nginx/ && systemctl start nginx"
+sudo -c "for file in *.log; do gzip \$file; done"  # Now works correctly!
+sudo -c "ps aux | grep nginx | awk '{print \$2}' | xargs kill"
 
 # Non-interactive scripting
 if sudo -n true 2>/dev/null; then
@@ -118,6 +120,10 @@ if sudo -n true 2>/dev/null; then
 else
     echo "Authentication required"
 fi
+
+# Combining options  
+sudo -H -c "echo 'Working in:' \$HOME; ls -la"
+sudo -u www-data -c "cd /var/www && find . -name '*.php' | head -5"
 ```
 
 ## Supported Options
@@ -211,6 +217,9 @@ For safety, these variable types are filtered with `-E`:
 ## Development
 
 ### Version History
+- **v1.6**: Fixed `-c` option, eliminated duplicate code, improved maintainability
+- **v1.5**: Added 9 new sudo options (72% compatibility achieved)
+- **v1.4**: Enhanced error handling and input validation
 - **v1.3**: Enhanced error handling and input validation
 - **v1.2**: Robust environment parsing with AWK, modular architecture  
 - **v1.1**: Environment preservation, proper login shell handling

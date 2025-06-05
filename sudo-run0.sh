@@ -4,7 +4,7 @@
 # that can be used as a drop-in sudo replacement
 
 # Version and constants
-readonly VERSION="1.5"
+readonly VERSION="1.6"
 readonly USAGE="usage: sudo [-u user] [-g group] [-i] [-s] [-H] [-E] [--preserve-env[=list]] [-n] [-b] [-k] [-K] [-c command] [-D directory] [-P] [-l] [-v] [-h] [-V] command [args...]"
 
 # Global variables for parsed options
@@ -76,6 +76,29 @@ validate_shell() {
             echo "$shell"
             ;;
     esac
+}
+
+# Get target shell for user (consolidated function)
+get_target_shell() {
+    local username="${1:-root}"
+    local shell
+    shell=$(get_user_shell "$username")
+    validate_shell "$shell"
+}
+
+# Set HOME directory for target user (consolidated function)
+set_target_home() {
+    local username="${1:-root}"
+    local target_home
+    
+    if [ "$username" = "root" ]; then
+        echo "--setenv=HOME=/root"
+    else
+        target_home=$(get_user_home "$username")
+        if [ -n "$target_home" ]; then
+            echo "--setenv=HOME=$target_home"
+        fi
+    fi
 }
 
 # Environment variable collection using awk for robust parsing
@@ -158,30 +181,51 @@ handle_special_modes() {
     fi
 }
 
-# Configure login shell environment
+# Configure login shell environment (refactored)
 setup_login_shell() {
     local target_user="$1"
     local shell_args=""
     
-    # Get and validate target user's shell
+    # Get and set target shell
     local target_shell
-    target_shell=$(get_user_shell "$target_user")
-    target_shell=$(validate_shell "$target_shell")
-    
+    target_shell=$(get_target_shell "$target_user")
     shell_args="$shell_args --setenv=SHELL=$target_shell"
     
-    # Set appropriate HOME directory
-    if [ "$target_user" = "root" ]; then
-        shell_args="$shell_args --setenv=HOME=/root"
-    else
-        local target_home
-        target_home=$(get_user_home "$target_user")
-        if [ -n "$target_home" ]; then
-            shell_args="$shell_args --setenv=HOME=$target_home"
-        fi
-    fi
+    # Set HOME directory
+    local home_arg
+    home_arg=$(set_target_home "$target_user")
+    shell_args="$shell_args $home_arg"
     
     echo "$shell_args"
+}
+
+# Determine final command to execute (consolidated logic)
+determine_final_command() {
+    local target_user="$1"
+    local login_shell="$2"
+    local shell_mode="$3"
+    local shell_command="$4"
+    shift 4
+    
+    # Handle shell command (-c option) - highest priority
+    if [ -n "$shell_command" ]; then
+        local target_shell
+        target_shell=$(get_target_shell "$target_user")
+        set -- "$target_shell" -c "$shell_command"
+        echo "$*"
+        return
+    fi
+    
+    # Handle login shell or shell mode when no command specified
+    if ([ "$login_shell" = true ] || [ "$shell_mode" = true ]) && [ $# -eq 0 ]; then
+        local target_shell
+        target_shell=$(get_target_shell "$target_user")
+        echo "$target_shell"
+        return
+    fi
+    
+    # Return any remaining arguments as-is
+    echo "$*"
 }
 
 # Parse command line arguments
@@ -368,7 +412,6 @@ parse_arguments() {
     fi
     
     # Handle preserve groups (limited implementation)
-    # Note: run0 doesn't have direct equivalent, so we'll preserve relevant group env vars
     if [ "$preserve_groups" = true ]; then
         local current_groups
         current_groups=$(id -G 2>/dev/null)
@@ -384,58 +427,39 @@ parse_arguments() {
         RUN0_ARGS="$RUN0_ARGS$env_args"
     fi
     
-    # Handle set-home option
+    # Handle set-home option (using consolidated function)
     if [ "$set_home" = true ]; then
-        local target_home
-        if [ "$target_user" = "root" ]; then
-            RUN0_ARGS="$RUN0_ARGS --setenv=HOME=/root"
-        else
-            target_home=$(get_user_home "$target_user")
-            if [ -n "$target_home" ]; then
-                RUN0_ARGS="$RUN0_ARGS --setenv=HOME=$target_home"
-            fi
-        fi
+        local home_arg
+        home_arg=$(set_target_home "$target_user")
+        RUN0_ARGS="$RUN0_ARGS $home_arg"
     fi
     
-    # Handle login shell
+    # Handle login shell (using refactored function)
     if [ "$login_shell" = true ]; then
         local shell_args
         shell_args=$(setup_login_shell "$target_user")
         RUN0_ARGS="$RUN0_ARGS$shell_args"
-        
-        # If no command specified with -i, start the target user's shell
-        if [ $# -eq 0 ] && [ -z "$shell_command" ]; then
-            local target_shell
-            target_shell=$(get_user_shell "$target_user")
-            target_shell=$(validate_shell "$target_shell")
-            set -- "$target_shell"
-        fi
     fi
     
-    # Handle shell mode
-    if [ "$shell_mode" = true ]; then
-        # If no command specified with -s, start the target user's shell
-        if [ $# -eq 0 ] && [ -z "$shell_command" ]; then
-            local target_shell
-            target_shell=$(get_user_shell "$target_user")
-            target_shell=$(validate_shell "$target_shell")
-            set -- "$target_shell"
-        fi
-    fi
-    
-    # Handle shell command (-c option)
+    # Handle shell command (-c option) - special case with direct execution
     if [ -n "$shell_command" ]; then
-        # Use the target user's shell to execute the command
         local target_shell
-        target_shell=$(get_user_shell "$target_user")
-        target_shell=$(validate_shell "$target_shell")
-        
-        # Set command to execute via shell
-        set -- "$target_shell" -c "$shell_command"
+        target_shell=$(get_target_shell "$target_user")
+        # Execute directly with proper quoting
+        if [ "$BACKGROUND_MODE" = true ]; then
+            nohup run0 $RUN0_ARGS "$target_shell" -c "$shell_command" >/dev/null 2>&1 &
+            exit 0
+        else
+            exec run0 $RUN0_ARGS "$target_shell" -c "$shell_command"
+        fi
     fi
+    
+    # Determine final command for other cases
+    local final_command
+    final_command=$(determine_final_command "$target_user" "$login_shell" "$shell_mode" "" "$@")
     
     # Set remaining command arguments
-    COMMAND_ARGS="$*"
+    COMMAND_ARGS="$final_command"
     
     # Store background mode for main execution
     if [ "$background_mode" = true ]; then
