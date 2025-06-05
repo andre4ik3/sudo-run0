@@ -5,18 +5,26 @@ This is a compatibility wrapper around systemd's `run0` utility that can be used
 ## Features
 
 - **Visual Compatibility**: Disables run0's superhero emoji and background color changes that would be inappropriate for sudo compatibility
-- **Environment Variable Preservation**: Supports `-E` and `--preserve-env` for maintaining environment variables across privilege escalation
+- **Robust Environment Variable Preservation**: Supports `-E` and `--preserve-env` with proper parsing that handles edge cases
 - **Proper Login Shell Handling**: The `-i` option correctly uses the target user's shell (not the invoking user's shell)
 - **Argument Compatibility**: Maps common sudo options to their run0 equivalents
-- **Minimal Dependencies**: Written in POSIX shell for maximum portability
+- **Error Handling**: Comprehensive error checking and user-friendly error messages
+- **Maintainable Code**: Well-structured, modular design for easy extension and maintenance
 - **Security**: Inherits run0's security model with service isolation and polkit authentication
+
+## Requirements
+
+- **systemd 256+** (when run0 was introduced)
+- **gawk** (GNU AWK) for robust environment variable parsing
+- Standard POSIX utilities: `getent`, `cut`, `sed`, `tr`
 
 ## Installation
 
 1. Copy `sudo-run0.sh` to your desired location (e.g., `/usr/local/bin/`)
 2. Make it executable: `chmod +x sudo-run0.sh`
 3. Create a symbolic link named `sudo`: `ln -s sudo-run0.sh sudo`
-4. Optionally, place it in your PATH to use system-wide
+4. Ensure `gawk` is installed (most distributions include it by default)
+5. Optionally, place it in your PATH to use system-wide
 
 ## Usage
 
@@ -121,10 +129,12 @@ sudo -u bob -E --preserve-env=DISPLAY xterm  # Run xterm as bob with display
 
 - **Security Model**: Inherits run0's service isolation and polkit authentication
 - **No SetUID Required**: Uses systemd's privilege escalation mechanism
-- **Environment Filtering**: Automatically filters out problematic variables to prevent command line corruption
+- **Robust Environment Parsing**: Uses GNU AWK for reliable environment variable parsing that handles edge cases
+- **Modular Design**: Well-structured functions for easy maintenance and extension
 - **Shell Detection**: Uses `getent` to determine target user's shell with fallback logic
 - **NixOS Compatibility**: Handles non-standard binary paths by checking basenames instead of full paths
-- **Compatibility**: Works with systemd 256+ (when run0 was introduced)
+- **Error Handling**: Comprehensive input validation and user-friendly error messages
+- **Version**: 1.2 (improved robustness and maintainability)
 
 ## Limitations
 
@@ -141,6 +151,11 @@ For safety and compatibility, the following variables are filtered out when usin
 - Complex path variables that can break command lines (PATH, LD_LIBRARY_PATH, etc.)
 - Variables with special characters that could cause shell injection
 - Very long variables (>200 characters) that could exceed command line limits
+
+**New in v1.2**: Environment variable parsing now uses GNU AWK for robust handling of:
+- Variables containing `=` signs in their values
+- Complex quoting and escaping scenarios
+- Improved filtering logic with regex pattern matching
 
 ### Login Shell Implementation
 The `-i` option:
