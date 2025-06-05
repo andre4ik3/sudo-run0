@@ -1,5 +1,23 @@
 # Changelog
 
+## [1.3] - 2024
+
+### Improved
+- **Error handling**: Enhanced invalid argument and missing argument error reporting
+- **Error messages**: More sudo-like error message format and consistent usage display
+- **Input validation**: Added validation for empty `--preserve-env=` arguments
+- **User experience**: Better error messages with proper formatting (no literal \n)
+
+### Added
+- **Comprehensive error tests**: Extended test suite to validate error handling scenarios
+- **Usage display**: Dedicated `show_usage()` function for consistent error output
+
+### Technical Details
+- Replaced `die()` function usage for argument errors with specific error handling
+- Added proper validation for `--preserve-env=` with empty variable lists
+- Improved error message formatting using `printf` instead of `echo` for consistency
+- Enhanced test coverage to include all error scenarios
+
 ## [1.2] - 2024
 
 ### Added

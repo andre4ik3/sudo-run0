@@ -61,5 +61,29 @@ else
     echo "✗ FAIL: Help and version commands failed"
 fi
 
+# Test 7: Error handling for invalid options
+echo -e "\nTest 7: Error handling for invalid options"
+if ./sudo -X 2>&1 | grep -q "invalid option" && ./sudo -X 2>&1 | grep -q "usage:"; then
+    echo "✓ PASS: Invalid options are properly handled"
+else
+    echo "✗ FAIL: Invalid option handling failed"
+fi
+
+# Test 8: Error handling for missing arguments
+echo -e "\nTest 8: Error handling for missing arguments"
+if ./sudo -u 2>&1 | grep -q "option requires an argument" && ./sudo -u 2>&1 | grep -q "usage:"; then
+    echo "✓ PASS: Missing arguments are properly handled"
+else
+    echo "✗ FAIL: Missing argument handling failed"
+fi
+
+# Test 9: Error handling for empty preserve-env
+echo -e "\nTest 9: Error handling for empty preserve-env"
+if ./sudo --preserve-env= 2>&1 | grep -q "requires a variable list" && ./sudo --preserve-env= 2>&1 | grep -q "usage:"; then
+    echo "✓ PASS: Empty preserve-env list is properly handled"
+else
+    echo "✗ FAIL: Empty preserve-env list handling failed"
+fi
+
 echo -e "\nAll tests completed!"
 echo "Note: Some tests may have triggered authentication prompts above." 

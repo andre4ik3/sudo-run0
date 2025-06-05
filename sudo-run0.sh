@@ -4,7 +4,7 @@
 # that can be used as a drop-in sudo replacement
 
 # Version and constants
-readonly VERSION="1.2"
+readonly VERSION="1.3"
 readonly USAGE="usage: sudo [-u user] [-g group] [-i] [-E] [--preserve-env[=list]] [-l] [-v] [-h] [-V] command [args...]"
 
 # Global variables for parsed options
@@ -13,8 +13,12 @@ COMMAND_ARGS=""
 
 # Utility functions
 die() {
-    echo "sudo: $*" >&2
+    printf "sudo: %s\n" "$1" >&2
     exit 1
+}
+
+show_usage() {
+    echo "$USAGE" >&2
 }
 
 show_help() {
@@ -200,10 +204,19 @@ parse_arguments() {
             --preserve-env=*)
                 preserve_env="specific"
                 preserve_env_vars="${1#--preserve-env=}"
+                if [ -z "$preserve_env_vars" ]; then
+                    echo "sudo: --preserve-env requires a variable list" >&2
+                    show_usage
+                    exit 1
+                fi
                 shift
                 ;;
             -u|--user)
-                [ -z "$2" ] && die "option requires an argument -- u"
+                if [ -z "$2" ]; then
+                    echo "sudo: option requires an argument -- u" >&2
+                    show_usage
+                    exit 1
+                fi
                 target_user="$2"
                 shift 2
                 ;;
@@ -212,7 +225,11 @@ parse_arguments() {
                 shift
                 ;;
             -g|--group)
-                [ -z "$2" ] && die "option requires an argument -- g"
+                if [ -z "$2" ]; then
+                    echo "sudo: option requires an argument -- g" >&2
+                    show_usage
+                    exit 1
+                fi
                 target_group="$2"
                 shift 2
                 ;;
@@ -229,7 +246,9 @@ parse_arguments() {
                 break
                 ;;
             -*)
-                die "invalid option -- '${1#-}'\n$USAGE"
+                echo "sudo: invalid option -- '${1#-}'" >&2
+                show_usage
+                exit 1
                 ;;
             *)
                 # Non-option argument
