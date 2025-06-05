@@ -3,17 +3,71 @@
 # sudo-run0: A compatibility wrapper around systemd's run0 utility
 # that can be used as a drop-in sudo replacement
 
-# Determine how this script was invoked
-SCRIPT_NAME=$(basename "$0")
+# Get the target user's shell from /etc/passwd
+get_user_shell() {
+    local username="$1"
+    if [ -z "$username" ]; then
+        username="root"
+    fi
+    
+    # Try getent first (more portable), fallback to /etc/passwd
+    if command -v getent >/dev/null 2>&1; then
+        getent passwd "$username" 2>/dev/null | cut -d: -f7
+    else
+        grep "^$username:" /etc/passwd 2>/dev/null | cut -d: -f7
+    fi
+}
 
-# Check if we're being called as 'sudo'
-is_sudo_mode() {
-    case "$SCRIPT_NAME" in
-        sudo|sudo.*)
-            return 0
+# Collect environment variables for preservation
+collect_env_vars() {
+    local preserve_mode="$1"
+    local specific_vars="$2"
+    
+    case "$preserve_mode" in
+        "all")
+            # Preserve environment variables, but be selective to avoid issues
+            env | while IFS='=' read -r key value; do
+                # Skip empty lines and variables that might cause issues
+                [ -z "$key" ] && continue
+                case "$key" in
+                    # Skip variables that run0/systemd manages
+                    PWD|OLDPWD|SHLVL|_|PS1|PS2|PS3|PS4) continue ;;
+                    # Skip sudo-specific variables
+                    SUDO_*) continue ;;
+                    # Skip very complex variables that cause command line issues
+                    LS_COLORS|FZF_DEFAULT_OPTS|NIX_PROFILES|*_PATH|*_DIRS|INFOPATH|XDG_*) continue ;;
+                    # Skip other potentially problematic variables
+                    MANPATH|PKG_CONFIG_PATH|FONTCONFIG_FILE|GIO_EXTRA_MODULES) continue ;;
+                    *) 
+                        # Only include simple, safe variables
+                        if [ -n "$value" ] && [ ${#value} -lt 200 ]; then
+                            case "$value" in
+                                # Skip values with problematic characters
+                                *\"*|*\'*|*\$*|*\`*|*\\*|*\;*|*\|*|*\&*|*\(*|*\)*) continue ;;
+                                # Skip values with spaces (they need special handling)
+                                *\ *) continue ;;
+                                *) printf ' --setenv=%s=%s' "$key" "$value" ;;
+                            esac
+                        fi
+                        ;;
+                esac
+            done
             ;;
-        *)
-            return 1
+        "specific")
+            # Preserve only specified variables
+            for var in $(echo "$specific_vars" | tr ',' ' '); do
+                # Remove any whitespace
+                var=$(echo "$var" | tr -d ' \t')
+                if [ -n "$var" ]; then
+                    value=$(eval "echo \"\$$var\"" 2>/dev/null)
+                    if [ -n "$value" ]; then
+                        # For specific variables, we'll handle them more carefully
+                        # Escape quotes and backslashes in the value
+                        escaped_value=$(printf '%s' "$value" | sed 's/\\/\\\\/g; s/"/\\"/g')
+                        printf ' --setenv=%s="%s"' "$var" "$escaped_value"
+                    fi
+                fi
+            done
             ;;
     esac
 }
@@ -21,80 +75,65 @@ is_sudo_mode() {
 # Parse arguments and build run0 command
 parse_args() {
     local run0_args=""
-    local user_args=""
     local target_user=""
     local target_group=""
     local login_shell=false
     local list_mode=false
     local validate_mode=false
+    local preserve_env=""
+    local preserve_env_vars=""
     
-    # If called as sudo, disable visual changes that are inappropriate
-    if is_sudo_mode; then
-        # Disable the superhero emoji prompt prefix
-        run0_args="$run0_args --shell-prompt-prefix="
-        # Disable background color changes
-        run0_args="$run0_args --background="
-    fi
+    # Always disable visual changes for sudo compatibility
+    run0_args="--shell-prompt-prefix= --background="
     
     # Parse command line arguments
     while [ $# -gt 0 ]; do
         case "$1" in
             -h|--help)
-                if is_sudo_mode; then
-                    echo "usage: sudo [-u user] [-g group] [-i] [-l] [-v] [-h] [-V] command [args...]"
-                    echo ""
-                    echo "Options:"
-                    echo "  -u, --user USER    run command as specified user"
-                    echo "  -g, --group GROUP  run command as specified group"
-                    echo "  -i, --login        run shell as login shell"
-                    echo "  -l, --list         list user's privileges"
-                    echo "  -v, --validate     update user's timestamp"
-                    echo "  -h, --help         display this help message"
-                    echo "  -V, --version      display version information"
-                else
-                    # Pass through to run0
-                    user_args="$user_args $1"
-                    shift
-                fi
+                echo "usage: sudo [-u user] [-g group] [-i] [-E] [--preserve-env[=list]] [-l] [-v] [-h] [-V] command [args...]"
+                echo ""
+                echo "Options:"
+                echo "  -u, --user USER               run command as specified user"
+                echo "  -g, --group GROUP             run command as specified group"
+                echo "  -i, --login                   run shell as target user's login shell"
+                echo "  -E, --preserve-env            preserve all environment variables"
+                echo "      --preserve-env=list       preserve specific environment variables (comma-separated)"
+                echo "  -l, --list                    list user's privileges"
+                echo "  -v, --validate                update user's timestamp"
+                echo "  -h, --help                    display this help message"
+                echo "  -V, --version                 display version information"
                 exit 0
                 ;;
             -V|--version)
-                if is_sudo_mode; then
-                    echo "sudo-run0 compatibility wrapper 1.0"
-                    echo "This is a wrapper around systemd run0 for sudo compatibility"
-                    echo "Underlying run0 version:"
-                    run0 --version 2>/dev/null || echo "run0 version unavailable"
-                else
-                    # Pass through to run0
-                    user_args="$user_args $1"
-                    shift
-                fi
+                echo "sudo-run0 compatibility wrapper 1.1"
+                echo "This is a wrapper around systemd run0 for sudo compatibility"
+                echo "Underlying run0 version:"
+                run0 --version 2>/dev/null || echo "run0 version unavailable"
                 exit 0
                 ;;
             -l|--list)
-                if is_sudo_mode; then
-                    list_mode=true
-                    shift
-                else
-                    user_args="$user_args $1"
-                    shift
-                fi
+                list_mode=true
+                shift
                 ;;
             -v|--validate)
-                if is_sudo_mode; then
-                    validate_mode=true
-                    shift
-                else
-                    user_args="$user_args $1"
-                    shift
-                fi
+                validate_mode=true
+                shift
+                ;;
+            -E|--preserve-env)
+                preserve_env="all"
+                shift
+                ;;
+            --preserve-env=*)
+                preserve_env="specific"
+                preserve_env_vars="${1#--preserve-env=}"
+                shift
                 ;;
             -u|--user)
                 if [ -n "$2" ]; then
                     target_user="$2"
                     shift 2
                 else
-                    echo "Error: -u requires an argument" >&2
+                    echo "sudo: option requires an argument -- u" >&2
                     exit 1
                 fi
                 ;;
@@ -107,7 +146,7 @@ parse_args() {
                     target_group="$2"
                     shift 2
                 else
-                    echo "Error: -g requires an argument" >&2
+                    echo "sudo: option requires an argument -- g" >&2
                     exit 1
                 fi
                 ;;
@@ -124,15 +163,9 @@ parse_args() {
                 break
                 ;;
             -*)
-                # Unknown option - pass through to run0 if not in sudo mode
-                if is_sudo_mode; then
-                    echo "sudo: invalid option -- '${1#-}'" >&2
-                    echo "usage: sudo [-u user] [-g group] [-i] [-l] [-v] [-h] [-V] command [args...]" >&2
-                    exit 1
-                else
-                    user_args="$user_args $1"
-                    shift
-                fi
+                echo "sudo: invalid option -- '${1#-}'" >&2
+                echo "usage: sudo [-u user] [-g group] [-i] [-E] [--preserve-env[=list]] [-l] [-v] [-h] [-V] command [args...]" >&2
+                exit 1
                 ;;
             *)
                 # Non-option argument - this and everything after goes to the command
@@ -141,41 +174,70 @@ parse_args() {
         esac
     done
     
-    # Handle special modes for sudo compatibility
-    if is_sudo_mode; then
-        if [ "$list_mode" = true ]; then
-            echo "User $(whoami) may run the following commands:"
-            echo "    (ALL) ALL"
-            exit 0
-        fi
-        
-        if [ "$validate_mode" = true ]; then
-            # Just trigger authentication like real sudo -v
-            run0 /bin/true >/dev/null 2>&1
-            exit $?
-        fi
+    # Handle special modes
+    if [ "$list_mode" = true ]; then
+        echo "User $(whoami) may run the following commands:"
+        echo "    (ALL) ALL"
+        exit 0
     fi
     
-    # Add user/group if specified
-    if [ -n "$target_user" ]; then
-        run0_args="$run0_args --user=$target_user"
+    if [ "$validate_mode" = true ]; then
+        # Just trigger authentication like real sudo -v
+        run0 /bin/true >/dev/null 2>&1
+        exit $?
     fi
+    
+    # Set default target user if not specified
+    if [ -z "$target_user" ]; then
+        target_user="root"
+    fi
+    
+    # Add user/group arguments
+    run0_args="$run0_args --user=$target_user"
     if [ -n "$target_group" ]; then
         run0_args="$run0_args --group=$target_group"
     fi
     
+    # Handle environment variable preservation
+    if [ -n "$preserve_env" ]; then
+        env_args=$(collect_env_vars "$preserve_env" "$preserve_env_vars")
+        run0_args="$run0_args$env_args"
+    fi
+    
     # Handle login shell
     if [ "$login_shell" = true ]; then
-        if [ $# -eq 0 ]; then
-            # No command specified with -i, start a login shell
-            set -- "${SHELL:-/bin/sh}"
+        # Get the target user's shell
+        target_shell=$(get_user_shell "$target_user")
+        if [ -z "$target_shell" ] || [ "$target_shell" = "/sbin/nologin" ] || [ "$target_shell" = "/bin/false" ]; then
+            target_shell="/bin/sh"
         fi
-        # Set environment to make it more like a login shell
-        run0_args="$run0_args --setenv=HOME=/root"
+        
+        # Set up login shell environment
+        run0_args="$run0_args --setenv=SHELL=$target_shell"
+        
+        # Set appropriate HOME directory
+        if [ "$target_user" = "root" ]; then
+            run0_args="$run0_args --setenv=HOME=/root"
+        else
+            # Try to get user's home directory
+            if command -v getent >/dev/null 2>&1; then
+                target_home=$(getent passwd "$target_user" 2>/dev/null | cut -d: -f6)
+            else
+                target_home=$(grep "^$target_user:" /etc/passwd 2>/dev/null | cut -d: -f6)
+            fi
+            if [ -n "$target_home" ]; then
+                run0_args="$run0_args --setenv=HOME=$target_home"
+            fi
+        fi
+        
+        # If no command specified with -i, start the target user's shell
+        if [ $# -eq 0 ]; then
+            set -- "$target_shell"
+        fi
     fi
     
     # Export the parsed arguments
-    RUN0_ARGS="$run0_args$user_args"
+    RUN0_ARGS="$run0_args"
     COMMAND_ARGS="$*"
 }
 

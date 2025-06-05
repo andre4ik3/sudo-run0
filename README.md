@@ -4,10 +4,12 @@ This is a compatibility wrapper around systemd's `run0` utility that can be used
 
 ## Features
 
-- **Visual Compatibility**: When called as `sudo`, disables run0's superhero emoji and background color changes that would be inappropriate for sudo compatibility
+- **Visual Compatibility**: Disables run0's superhero emoji and background color changes that would be inappropriate for sudo compatibility
+- **Environment Variable Preservation**: Supports `-E` and `--preserve-env` for maintaining environment variables across privilege escalation
+- **Proper Login Shell Handling**: The `-i` option correctly uses the target user's shell (not the invoking user's shell)
 - **Argument Compatibility**: Maps common sudo options to their run0 equivalents
-- **Dual Mode**: Works both as a sudo replacement and as a regular run0 wrapper
 - **Minimal Dependencies**: Written in POSIX shell for maximum portability
+- **Security**: Inherits run0's security model with service isolation and polkit authentication
 
 ## Installation
 
@@ -18,104 +20,142 @@ This is a compatibility wrapper around systemd's `run0` utility that can be used
 
 ## Usage
 
-### As sudo replacement
+### Basic Usage
 ```bash
-# Basic usage
-./sudo whoami
+# Basic privilege escalation
+sudo whoami
 
 # Run as different user
-./sudo -u username command
+sudo -u username command
 
 # Run as different group  
-./sudo -g groupname command
+sudo -g groupname command
 
-# Interactive login shell
-./sudo -i
+# Interactive login shell (uses target user's shell and home)
+sudo -i
+
+# Preserve all environment variables
+sudo -E command
+
+# Preserve specific environment variables
+sudo --preserve-env=PATH,HOME command
 
 # List privileges
-./sudo -l
+sudo -l
 
 # Validate/refresh authentication
-./sudo -v
+sudo -v
 
-# Help
-./sudo --help
-
-# Version information
-./sudo --version
+# Help and version
+sudo --help
+sudo --version
 ```
 
-### As run0 wrapper
+### Environment Variable Examples
 ```bash
-# All run0 options are passed through
-./sudo-run0.sh --user=username command
-./sudo-run0.sh --property=CPUQuota=50% command
+# Preserve your current PATH when running as root
+sudo -E which your-command
+
+# Preserve specific variables for a build process
+CFLAGS="-O2" CXXFLAGS="-O2" sudo --preserve-env=CFLAGS,CXXFLAGS make install
+
+# Use login shell with clean environment
+sudo -i  # Gets root's shell and home directory
 ```
 
 ## Supported sudo Options
 
-When called as `sudo`, the following options are supported:
-
 - `-u, --user USER`: Run command as specified user
 - `-g, --group GROUP`: Run command as specified group  
-- `-i, --login`: Run shell as login shell
+- `-i, --login`: Run shell as target user's login shell
+- `-E, --preserve-env`: Preserve all environment variables (filtered for safety)
+- `--preserve-env=list`: Preserve specific environment variables (comma-separated)
 - `-l, --list`: List user's privileges (simplified output)
 - `-v, --validate`: Update user's timestamp (triggers authentication)
 - `-h, --help`: Display help message
 - `-V, --version`: Display version information
 
-## Behavior Differences
+## Key Compatibility Improvements
 
-### When called as `sudo`:
-- Superhero emoji prompt prefix is disabled (`--shell-prompt-prefix=""`)
-- Background color changes are disabled (`--background=""`)
-- Only sudo-compatible options are accepted
-- Error messages match sudo format
-- Help and version output is sudo-style
+### Environment Variable Handling
+Unlike standard `run0` which provides a clean environment, this wrapper:
+- Supports sudo-style environment preservation with `-E`
+- Allows selective variable preservation with `--preserve-env=list`
+- Filters out problematic variables that could break the command line
+- Properly handles variables with special characters
 
-### When called as the original name (e.g., `sudo-run0.sh`):
-- All run0 options are passed through unchanged
-- Normal run0 visual behavior is preserved
-- Full run0 functionality is available
+### Login Shell Behavior
+Fixes a key difference between `run0` and `sudo`:
+- **run0 default**: Uses invoking user's shell (e.g., if your shell is zsh, root gets zsh)
+- **sudo -i behavior**: Uses target user's shell (e.g., if root's shell is bash, you get bash)
+- **This wrapper**: Correctly implements sudo's behavior for `-i`
+
+### Visual Changes
+- Disables superhero emoji prompt prefix
+- Disables background color changes
+- Provides sudo-style help and error messages
 
 ## Examples
 
 ```bash
-# Install system package (as sudo)
-./sudo apt update
+# Traditional sudo usage
+sudo apt update
+sudo -u alice cat /home/alice/file.txt
 
-# Edit system file (as sudo)
-./sudo -u root nano /etc/hosts
+# Environment preservation
+export BUILD_TYPE=release
+sudo -E make install  # Preserves BUILD_TYPE
 
-# Switch to user account (as sudo)
-./sudo -u alice -i
+# Selective environment preservation
+sudo --preserve-env=HOME,USER,LANG command
 
-# Run with run0 features (direct call)
-./sudo-run0.sh --property=MemoryMax=1G --user=alice command
+# Login shell (gets target user's shell and environment)
+sudo -i                    # Interactive root shell
+sudo -u alice -i           # Interactive shell as alice
+
+# Combined options
+sudo -u bob -E --preserve-env=DISPLAY xterm  # Run xterm as bob with display
 ```
 
 ## Implementation Notes
 
-- Built for systemd environments with run0 available
-- Uses polkit for authentication (like run0)
-- Maintains run0's security model with fresh service isolation
-- No SetUID/SetGID required (inherits run0's design)
-- Compatible with systemd 256+ (when run0 was introduced)
+- **Security Model**: Inherits run0's service isolation and polkit authentication
+- **No SetUID Required**: Uses systemd's privilege escalation mechanism
+- **Environment Filtering**: Automatically filters out problematic variables to prevent command line corruption
+- **Shell Detection**: Uses `getent` or `/etc/passwd` to determine target user's shell
+- **Compatibility**: Works with systemd 256+ (when run0 was introduced)
 
 ## Limitations
 
-- Not all sudo options are implemented (only the most common ones)
-- Some advanced sudo features like sudoers rules are simplified
-- Requires systemd and run0 to be available
-- Authentication prompts may look different (polkit vs sudo)
+- **Environment Filtering**: Some complex environment variables are filtered out for stability
+- **Command Line Length**: Very long environment values are skipped to prevent issues
+- **systemd Dependency**: Requires systemd with run0 available
+- **Authentication**: Uses polkit prompts which may look different from traditional sudo
+
+## Technical Details
+
+### Environment Variable Filtering
+For safety and compatibility, the following variables are filtered out when using `-E`:
+- System variables managed by systemd/run0 (PWD, SHLVL, etc.)
+- Complex path variables that can break command lines (PATH, LD_LIBRARY_PATH, etc.)
+- Variables with special characters that could cause shell injection
+- Very long variables (>200 characters) that could exceed command line limits
+
+### Login Shell Implementation
+The `-i` option:
+1. Looks up the target user's shell from the system user database
+2. Sets `SHELL` environment variable to the target user's shell
+3. Sets `HOME` to the target user's home directory
+4. Falls back to `/bin/sh` if target user has no valid shell
 
 ## Contributing
 
 This wrapper is designed to be extensible. To add support for additional sudo options:
 
 1. Add the option parsing in the `parse_args()` function
-2. Map it to appropriate run0 arguments
+2. Map it to appropriate run0 arguments  
 3. Update the help text and documentation
+4. Test thoroughly with various edge cases
 
 ## License
 
