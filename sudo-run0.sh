@@ -1,13 +1,32 @@
-#!/bin/sh
+#!/run/current-system/sw/bin/bash
 
 # sudo-run0: A compatibility wrapper around systemd's run0 utility
 # that can be used as a drop-in sudo replacement
 
 # Version and constants
-readonly VERSION="1.6"
+readonly VERSION="1.7"
 readonly USAGE="usage: sudo [-u user] [-g group] [-i] [-s] [-H] [-E] [--preserve-env[=list]] [-n] [-b] [-k] [-K] [-c command] [-D directory] [-P] [-l] [-v] [-h] [-V] command [args...]"
 
 # Global variables for parsed options
+declare -A OPTIONS=(
+    [target_user]=""
+    [target_group]=""
+    [login_shell]=false
+    [shell_mode]=false
+    [set_home]=false
+    [list_mode]=false
+    [validate_mode]=false
+    [preserve_env]=""
+    [preserve_env_vars]=""
+    [non_interactive]=false
+    [background_mode]=false
+    [reset_timestamp]=false
+    [remove_timestamp]=false
+    [shell_command]=""
+    [working_directory]=""
+    [preserve_groups]=false
+)
+
 RUN0_ARGS=""
 COMMAND_ARGS=""
 
@@ -139,24 +158,19 @@ collect_env_vars() {
 
 # Handle special sudo modes
 handle_special_modes() {
-    local list_mode="$1"
-    local validate_mode="$2"
-    local reset_timestamp="$3"
-    local remove_timestamp="$4"
-    
-    if [ "$list_mode" = true ]; then
+    if [[ "${OPTIONS[list_mode]}" == true ]]; then
         echo "User $(whoami) may run the following commands:"
         echo "    (ALL) ALL"
         exit 0
     fi
     
-    if [ "$validate_mode" = true ]; then
+    if [[ "${OPTIONS[validate_mode]}" == true ]]; then
         # Trigger authentication like real sudo -v
         run0 /bin/true >/dev/null 2>&1
         exit $?
     fi
     
-    if [ "$reset_timestamp" = true ] || [ "$remove_timestamp" = true ]; then
+    if [[ "${OPTIONS[reset_timestamp]}" == true ]] || [[ "${OPTIONS[remove_timestamp]}" == true ]]; then
         # Simulate timestamp reset by triggering a failing auth
         # This will effectively "reset" the polkit timestamp
         run0 --no-ask-password /bin/false >/dev/null 2>&1
@@ -185,22 +199,19 @@ setup_login_shell() {
 # Determine final command to execute (consolidated logic)
 determine_final_command() {
     local target_user="$1"
-    local login_shell="$2"
-    local shell_mode="$3"
-    local shell_command="$4"
-    shift 4
+    shift
     
     # Handle shell command (-c option) - highest priority
-    if [ -n "$shell_command" ]; then
+    if [[ -n "${OPTIONS[shell_command]}" ]]; then
         local target_shell
         target_shell=$(get_target_shell "$target_user")
-        set -- "$target_shell" -c "$shell_command"
+        set -- "$target_shell" -c "${OPTIONS[shell_command]}"
         echo "$*"
         return
     fi
     
     # Handle login shell or shell mode when no command specified
-    if ([ "$login_shell" = true ] || [ "$shell_mode" = true ]) && [ $# -eq 0 ]; then
+    if ([[ "${OPTIONS[login_shell]}" == true ]] || [[ "${OPTIONS[shell_mode]}" == true ]]) && [ $# -eq 0 ]; then
         local target_shell
         target_shell=$(get_target_shell "$target_user")
         echo "$target_shell"
@@ -211,29 +222,49 @@ determine_final_command() {
     echo "$*"
 }
 
-# Parse command line arguments
+# Validate option conflicts and set appropriate precedence
+validate_and_resolve_conflicts() {
+    # Validate working directory if specified
+    if [[ -n "${OPTIONS[working_directory]}" ]]; then
+        if [[ ! -d "${OPTIONS[working_directory]}" ]]; then
+            die "${OPTIONS[working_directory]}: No such file or directory"
+        fi
+    fi
+    
+    # Validate user existence if specified
+    if [[ -n "${OPTIONS[target_user]}" ]] && [[ "${OPTIONS[target_user]}" != "root" ]]; then
+        if ! getent passwd "${OPTIONS[target_user]}" >/dev/null 2>&1; then
+            die "unknown user: ${OPTIONS[target_user]}"
+        fi
+    fi
+    
+    # Validate group existence if specified
+    if [[ -n "${OPTIONS[target_group]}" ]]; then
+        if ! getent group "${OPTIONS[target_group]}" >/dev/null 2>&1; then
+            die "unknown group: ${OPTIONS[target_group]}"
+        fi
+    fi
+}
+
+# Enhanced argument parsing using GNU getopt
 parse_arguments() {
-    local target_user=""
-    local target_group=""
-    local login_shell=false
-    local shell_mode=false
-    local set_home=false
-    local list_mode=false
-    local validate_mode=false
-    local preserve_env=""
-    local preserve_env_vars=""
-    local non_interactive=false
-    local background_mode=false
-    local reset_timestamp=false
-    local remove_timestamp=false
-    local shell_command=""
-    local working_directory=""
-    local preserve_groups=false
+    # Define short and long options
+    # + prefix means stop at first non-option (critical for sudo behavior)
+    local short_opts="+u:g:c:D:isHEnbkKPlvhV"
+    local long_opts="user:,group:,command:,chdir:,login,shell,set-home,preserve-env::,non-interactive,background,reset-timestamp,remove-timestamp,preserve-groups,list,validate,help,version"
     
-    # Always disable visual changes for sudo compatibility
-    RUN0_ARGS="--shell-prompt-prefix= --background="
+    # Parse arguments using getopt
+    local parsed_args
+    if ! parsed_args=$(getopt -o "$short_opts" -l "$long_opts" -n "sudo" -- "$@"); then
+        show_usage
+        exit 1
+    fi
     
-    while [ $# -gt 0 ]; do
+    # Set parsed arguments
+    eval set -- "$parsed_args"
+    
+    # Process parsed options
+    while true; do
         case "$1" in
             -h|--help)
                 show_help
@@ -243,210 +274,177 @@ parse_arguments() {
                 show_version
                 exit 0
                 ;;
-            -l|--list)
-                list_mode=true
-                shift
+            -u|--user)
+                OPTIONS[target_user]="$2"
+                shift 2
                 ;;
-            -v|--validate)
-                validate_mode=true
-                shift
-                ;;
-            -k|--reset-timestamp)
-                reset_timestamp=true
-                shift
-                ;;
-            -K|--remove-timestamp)
-                remove_timestamp=true
-                shift
-                ;;
-            -s|--shell)
-                shell_mode=true
-                shift
-                ;;
-            -H|--set-home)
-                set_home=true
-                shift
-                ;;
-            -n|--non-interactive)
-                non_interactive=true
-                shift
-                ;;
-            -b|--background)
-                background_mode=true
-                shift
-                ;;
-            -P|--preserve-groups)
-                preserve_groups=true
-                shift
+            -g|--group)
+                OPTIONS[target_group]="$2"
+                shift 2
                 ;;
             -c|--command)
-                if [ -z "$2" ]; then
-                    echo "sudo: option requires an argument -- c" >&2
-                    show_usage
-                    exit 1
-                fi
-                shell_command="$2"
+                OPTIONS[shell_command]="$2"
                 shift 2
-                # When using -c, ignore remaining arguments (like real sudo does)
-                break
-                ;;
-            -c*)
-                shell_command="${1#-c}"
-                shift
-                # When using -c, ignore remaining arguments (like real sudo does)
+                # When using -c, remaining args after -- are ignored (like real sudo)
                 break
                 ;;
             -D|--chdir)
-                if [ -z "$2" ]; then
-                    echo "sudo: option requires an argument -- D" >&2
-                    show_usage
-                    exit 1
-                fi
-                working_directory="$2"
+                OPTIONS[working_directory]="$2"
                 shift 2
                 ;;
-            -D*)
-                working_directory="${1#-D}"
+            -i|--login)
+                OPTIONS[login_shell]=true
+                shift
+                ;;
+            -s|--shell)
+                OPTIONS[shell_mode]=true
+                shift
+                ;;
+            -H|--set-home)
+                OPTIONS[set_home]=true
                 shift
                 ;;
             -E|--preserve-env)
-                preserve_env="all"
-                shift
-                ;;
-            --preserve-env=*)
-                preserve_env="specific"
-                preserve_env_vars="${1#--preserve-env=}"
-                if [ -z "$preserve_env_vars" ]; then
-                    echo "sudo: --preserve-env requires a variable list" >&2
-                    show_usage
-                    exit 1
+                if [[ "$1" == "--preserve-env" && -n "$2" ]]; then
+                    # --preserve-env with separate argument (shouldn't happen with ::)
+                    OPTIONS[preserve_env]="specific"
+                    OPTIONS[preserve_env_vars]="$2"
+                    shift 2
+                elif [[ "$1" == --preserve-env=* ]]; then
+                    # --preserve-env=list format
+                    OPTIONS[preserve_env]="specific"
+                    OPTIONS[preserve_env_vars]="${1#--preserve-env=}"
+                    shift 1
+                else
+                    # -E format (preserve all) or --preserve-env without argument
+                    OPTIONS[preserve_env]="all"
+                    shift 1
                 fi
+                ;;
+            -n|--non-interactive)
+                OPTIONS[non_interactive]=true
                 shift
                 ;;
-            -u|--user)
-                if [ -z "$2" ]; then
-                    echo "sudo: option requires an argument -- u" >&2
-                    show_usage
-                    exit 1
-                fi
-                target_user="$2"
-                shift 2
-                ;;
-            -u*)
-                target_user="${1#-u}"
+            -b|--background)
+                OPTIONS[background_mode]=true
                 shift
                 ;;
-            -g|--group)
-                if [ -z "$2" ]; then
-                    echo "sudo: option requires an argument -- g" >&2
-                    show_usage
-                    exit 1
-                fi
-                target_group="$2"
-                shift 2
-                ;;
-            -g*)
-                target_group="${1#-g}"
+            -k|--reset-timestamp)
+                OPTIONS[reset_timestamp]=true
                 shift
                 ;;
-            -i|--login)
-                login_shell=true
+            -K|--remove-timestamp)
+                OPTIONS[remove_timestamp]=true
+                shift
+                ;;
+            -P|--preserve-groups)
+                OPTIONS[preserve_groups]=true
+                shift
+                ;;
+            -l|--list)
+                OPTIONS[list_mode]=true
+                shift
+                ;;
+            -v|--validate)
+                OPTIONS[validate_mode]=true
                 shift
                 ;;
             --)
                 shift
                 break
                 ;;
-            -*)
-                echo "sudo: invalid option -- '${1#-}'" >&2
-                show_usage
-                exit 1
-                ;;
             *)
-                # Non-option argument
-                break
+                die "internal error in argument parsing"
                 ;;
         esac
     done
     
+    # Validate options and resolve conflicts
+    validate_and_resolve_conflicts
+    
     # Handle special modes first
-    handle_special_modes "$list_mode" "$validate_mode" "$reset_timestamp" "$remove_timestamp"
+    handle_special_modes
     
     # Set default target user
-    target_user="${target_user:-root}"
+    if [[ -z "${OPTIONS[target_user]}" ]]; then
+        OPTIONS[target_user]="root"
+    fi
     
     # Build run0 arguments
-    RUN0_ARGS="$RUN0_ARGS --user=$target_user"
-    [ -n "$target_group" ] && RUN0_ARGS="$RUN0_ARGS --group=$target_group"
+    build_run0_args
+    
+    # Handle shell command (-c option) - special case with direct execution
+    if [[ -n "${OPTIONS[shell_command]}" ]]; then
+        local target_shell
+        target_shell=$(get_target_shell "${OPTIONS[target_user]}")
+        # Execute directly with proper quoting
+        if [[ "${OPTIONS[background_mode]}" == true ]]; then
+            nohup run0 $RUN0_ARGS "$target_shell" -c "${OPTIONS[shell_command]}" >/dev/null 2>&1 &
+            exit 0
+        else
+            exec run0 $RUN0_ARGS "$target_shell" -c "${OPTIONS[shell_command]}"
+        fi
+    fi
+    
+    # Determine final command
+    local final_command
+    final_command=$(determine_final_command "${OPTIONS[target_user]}" "$@")
+    
+    # Set remaining command arguments
+    COMMAND_ARGS="$final_command"
+}
+
+# Build run0 arguments based on parsed options
+build_run0_args() {
+    # Always disable visual changes for sudo compatibility
+    RUN0_ARGS="--shell-prompt-prefix= --background="
+    
+    # Add user specification
+    RUN0_ARGS="$RUN0_ARGS --user=${OPTIONS[target_user]}"
+    
+    # Add group if specified
+    if [[ -n "${OPTIONS[target_group]}" ]]; then
+        RUN0_ARGS="$RUN0_ARGS --group=${OPTIONS[target_group]}"
+    fi
     
     # Handle working directory change
-    if [ -n "$working_directory" ]; then
-        # Validate that directory exists and is accessible
-        if [ ! -d "$working_directory" ]; then
-            echo "sudo: $working_directory: No such file or directory" >&2
-            exit 1
-        fi
-        RUN0_ARGS="$RUN0_ARGS --chdir=$working_directory"
+    if [[ -n "${OPTIONS[working_directory]}" ]]; then
+        RUN0_ARGS="$RUN0_ARGS --chdir=${OPTIONS[working_directory]}"
     fi
     
     # Handle non-interactive mode
-    if [ "$non_interactive" = true ]; then
+    if [[ "${OPTIONS[non_interactive]}" == true ]]; then
         RUN0_ARGS="$RUN0_ARGS --no-ask-password"
     fi
     
     # Handle preserve groups (limited implementation)
-    if [ "$preserve_groups" = true ]; then
+    if [[ "${OPTIONS[preserve_groups]}" == true ]]; then
         local current_groups
         current_groups=$(id -G 2>/dev/null)
-        if [ -n "$current_groups" ]; then
+        if [[ -n "$current_groups" ]]; then
             RUN0_ARGS="$RUN0_ARGS --setenv=SUDO_GROUPS=$current_groups"
         fi
     fi
     
     # Handle environment variable preservation
-    if [ -n "$preserve_env" ]; then
+    if [[ -n "${OPTIONS[preserve_env]}" ]]; then
         local env_args
-        env_args=$(collect_env_vars "$preserve_env" "$preserve_env_vars")
+        env_args=$(collect_env_vars "${OPTIONS[preserve_env]}" "${OPTIONS[preserve_env_vars]}")
         RUN0_ARGS="$RUN0_ARGS$env_args"
     fi
     
-    # Handle set-home option (using consolidated function)
-    if [ "$set_home" = true ]; then
+    # Handle set-home option
+    if [[ "${OPTIONS[set_home]}" == true ]]; then
         local home_arg
-        home_arg=$(set_target_home "$target_user")
+        home_arg=$(set_target_home "${OPTIONS[target_user]}")
         RUN0_ARGS="$RUN0_ARGS $home_arg"
     fi
     
-    # Handle login shell (using refactored function)
-    if [ "$login_shell" = true ]; then
+    # Handle login shell
+    if [[ "${OPTIONS[login_shell]}" == true ]]; then
         local shell_args
-        shell_args=$(setup_login_shell "$target_user")
+        shell_args=$(setup_login_shell "${OPTIONS[target_user]}")
         RUN0_ARGS="$RUN0_ARGS$shell_args"
-    fi
-    
-    # Handle shell command (-c option) - special case with direct execution
-    if [ -n "$shell_command" ]; then
-        local target_shell
-        target_shell=$(get_target_shell "$target_user")
-        # Execute directly with proper quoting
-        if [ "$BACKGROUND_MODE" = true ]; then
-            nohup run0 $RUN0_ARGS "$target_shell" -c "$shell_command" >/dev/null 2>&1 &
-            exit 0
-        else
-            exec run0 $RUN0_ARGS "$target_shell" -c "$shell_command"
-        fi
-    fi
-    
-    # Determine final command for other cases
-    local final_command
-    final_command=$(determine_final_command "$target_user" "$login_shell" "$shell_mode" "" "$@")
-    
-    # Set remaining command arguments
-    COMMAND_ARGS="$final_command"
-    
-    # Store background mode for main execution
-    if [ "$background_mode" = true ]; then
-        BACKGROUND_MODE=true
     fi
 }
 
@@ -456,8 +454,8 @@ main() {
     parse_arguments "$@"
     
     # Execute run0 with our arguments
-    if [ -n "$COMMAND_ARGS" ]; then
-        if [ "$BACKGROUND_MODE" = true ]; then
+    if [[ -n "$COMMAND_ARGS" ]]; then
+        if [[ "${OPTIONS[background_mode]}" == true ]]; then
             # Run in background - use nohup to properly detach
             nohup run0 $RUN0_ARGS $COMMAND_ARGS >/dev/null 2>&1 &
             exit 0
@@ -465,7 +463,7 @@ main() {
             exec run0 $RUN0_ARGS $COMMAND_ARGS
         fi
     else
-        if [ "$BACKGROUND_MODE" = true ]; then
+        if [[ "${OPTIONS[background_mode]}" == true ]]; then
             nohup run0 $RUN0_ARGS >/dev/null 2>&1 &
             exit 0
         else
