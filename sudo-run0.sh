@@ -1,5 +1,7 @@
 #!/run/current-system/sw/bin/bash
 
+set -euo pipefail
+
 # sudo-run0: A compatibility wrapper around systemd's run0 utility
 # that can be used as a drop-in sudo replacement
 
@@ -62,10 +64,10 @@ EOF
 }
 
 show_version() {
-    echo "sudo-run0 compatibility wrapper $VERSION"
-    echo "This is a wrapper around systemd run0 for sudo compatibility"
-    echo "Underlying run0 version:"
-    run0 --version 2>/dev/null || echo "run0 version unavailable"
+    run0_version="$(run0 --version 2>/dev/null | head -n 1 | cut -d' ' -f3 | sed 's/[()]//g')"
+    echo "Sudo version 1.9.0" # fake version for compatibility
+    echo "Sudo-run0 wrapper version $VERSION"
+    echo "Systemd version $run0_version"
 }
 
 # Get shell for the target user or current user
