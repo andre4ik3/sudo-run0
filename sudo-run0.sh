@@ -316,6 +316,15 @@ parse_arguments() {
     # Set default target user
     OPTIONS[target_user]="${OPTIONS[target_user]:-root}"
     
+    # Check if a command is provided when required
+    if [ $# -eq 0 ] && \
+       [[ -z "${OPTIONS[shell_command]}" ]] && \
+       [[ "${OPTIONS[login_shell]}" != true ]] && \
+       [[ "${OPTIONS[shell_mode]}" != true ]]; then
+        echo "$USAGE" >&2
+        exit 1
+    fi
+    
     # Build run0 arguments
     build_run0_args
     
