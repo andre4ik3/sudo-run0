@@ -15,7 +15,7 @@ This document provides a comprehensive analysis of sudo compatibility in the sud
 | `-i, --login` | ✅ Full compatibility | Sets SHELL, HOME, uses target shell |
 | `-s, --shell` | ✅ Full compatibility | Simpler alternative to `-i` |
 | `-H, --set-home` | ✅ Full compatibility | Sets HOME via `--setenv` |
-| `-E, --preserve-env` | ✅ With safety filtering | AWK-based parsing, excludes dangerous vars |
+| `-E, --preserve-env` | ✅ Full compatibility | Native run0 automatic value pickup |
 | `--preserve-env=list` | ✅ Full compatibility | Handles specific variable preservation |
 | `-n, --non-interactive` | ✅ Native run0 support | Maps to `--no-ask-password` |
 | `-b, --background` | ✅ Using nohup | Proper process detachment |
@@ -31,7 +31,7 @@ This document provides a comprehensive analysis of sudo compatibility in the sud
 
 **Compatibility Rate: 18/25 major options = 72%**
 
-## 🟡 Remaining Implementable Options (7 options)
+## 🟡 Remaining Implementable Options (6 options)
 
 ### Medium Difficulty
 
@@ -43,14 +43,12 @@ This document provides a comprehensive analysis of sudo compatibility in the sud
 | `-R, --chroot` | 🟡 Medium | Chroot before execution | May need systemd service properties |
 | `-T, --command-timeout` | 🟡 Medium | Command execution timeout | Use timeout command wrapper |
 | `-U, --other-user` | 🟡 Easy | List permissions for other user | Extend `-l` implementation |
-| `--preserve-env-exact` | 🟡 Easy | Preserve env without filtering | Remove safety filters |
 
 ### Implementation Priority
 1. **`-T, --command-timeout`** - Easy with `timeout` command
 2. **`-U, --other-user`** - Extend existing `-l` functionality  
-3. **`--preserve-env-exact`** - Simple flag to disable filtering
-4. **`-C, --close-from`** - Research run0 fd capabilities
-5. **`-R, --chroot`** - Test systemd service chroot support
+3. **`-C, --close-from`** - Research run0 fd capabilities
+4. **`-R, --chroot`** - Test systemd service chroot support
 
 ## 🔴 Impossible/Extremely Hard Options (6 options)
 
@@ -66,9 +64,9 @@ This document provides a comprehensive analysis of sudo compatibility in the sud
 ## 📋 Implementation Roadmap
 
 ### Phase 1: Easy Wins (Target: v1.6)
+- [x] **Environment simplification** - Removed length limits and filtering complexity
 - [ ] `-T, --command-timeout` - Use timeout command wrapper
 - [ ] `-U, --other-user` - Extend `-l` for specific users
-- [ ] `--preserve-env-exact` - Add flag to disable env filtering
 - [ ] Improved error messages with exit codes matching sudo
 
 ### Phase 2: Medium Complexity (Target: v1.7)
@@ -89,16 +87,27 @@ This document provides a comprehensive analysis of sudo compatibility in the sud
 
 ## 🛠 Technical Implementation Details
 
-### Environment Variable Safety (current filtering)
+### Environment Variable Implementation (v1.6)
 ```bash
-# Currently filtered for safety:
-- System vars: PWD, OLDPWD, SHLVL, PS1-4
-- sudo vars: SUDO_*
-- Path vars: *_PATH, *_DIRS  
-- Display vars: XDG_*
-- Large vars: >200 characters
-- Vars with shell metacharacters in "all" mode
+# New simplified approach using run0's automatic value pickup:
+# For all variables (-E):
+env | while IFS='=' read -r name value; do
+    case "$name" in
+        PWD|OLDPWD|SHLVL|_|PS1|PS2|PS3|PS4|SUDO_*) continue ;;
+        *) printf " --setenv=%s" "$name" ;;
+    esac
+done
+
+# For specific variables (--preserve-env=list):
+printf " --setenv=%s" "$var"  # run0 picks up value automatically
 ```
+
+### Benefits of New Approach
+- **No length restrictions** - handles variables of any size
+- **No escaping issues** - run0 handles all value complexity
+- **Perfect compatibility** - preserves values exactly as in original environment
+- **Simplified code** - eliminates complex AWK parsing logic
+- **Better performance** - no expensive string processing
 
 ### Authentication Simulation Techniques
 ```bash
@@ -181,7 +190,7 @@ nohup run0 $RUN0_ARGS $COMMAND_ARGS >/dev/null 2>&1 &
 ### Security Principles
 1. **Never reduce security** compared to run0 defaults
 2. **Validate all inputs** before passing to run0
-3. **Filter dangerous environment variables** by default
+3. **Filter only shell-specific variables** (PWD, SHLVL, PS1-4, SUDO_*)
 4. **Fail securely** - deny rather than allow on errors
 5. **Audit trail preservation** through systemd logging
 

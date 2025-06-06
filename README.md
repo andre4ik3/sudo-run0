@@ -2,6 +2,14 @@
 
 This compatibility wrapper bridges the gap between traditional `sudo` and systemd's `run0`, enabling programs and scripts that expect sudo behavior to work seamlessly with run0's modern security model.
 
+## Features
+
+- **Drop-in sudo replacement**: Works with existing scripts and commands
+- **systemd integration**: Leverages run0 for clean, secure privilege escalation
+- **Full environment preservation**: No value length limits or complex escaping
+- **POSIX compliant**: Portable shell script, no heavy dependencies
+- **Secure defaults**: Maintains systemd's security model
+
 ## Overview
 
 **systemd run0** offers significant security improvements over traditional sudo through service isolation and polkit authentication, but introduces compatibility challenges for existing software. This wrapper addresses the most common compatibility issues while preserving run0's enhanced security model.
@@ -32,17 +40,31 @@ This compatibility wrapper bridges the gap between traditional `sudo` and system
 
 ## Requirements
 
-- **systemd 256+** (when run0 was introduced)
-- **gawk** (GNU AWK) for robust environment variable parsing
-- Standard POSIX utilities: `getent`, `cut`, `sed`, `tr`
+- **systemd v256+** with run0 utility
+- **POSIX shell** (bash, dash, zsh, etc.)
 
 ## Installation
 
-1. Copy `sudo-run0.sh` to your desired location (e.g., `/usr/local/bin/`)
-2. Make it executable: `chmod +x sudo-run0.sh`
-3. Create a symbolic link named `sudo`: `ln -s sudo-run0.sh sudo`
-4. Ensure `gawk` is installed (most distributions include it by default)
-5. Optionally, place it in your PATH to use system-wide
+1. Download the script:
+   ```bash
+   curl -o sudo-run0.sh https://raw.githubusercontent.com/user/sudo-run0/main/sudo-run0.sh
+   chmod +x sudo-run0.sh
+   ```
+
+2. **Optional**: Install as `sudo` replacement:
+   ```bash
+   sudo cp sudo-run0.sh /usr/local/bin/sudo
+   ```
+
+3. **Optional**: Add to PATH for testing:
+   ```bash
+   ln -s /path/to/sudo-run0.sh ~/.local/bin/sudo
+   ```
+
+4. Test functionality:
+   ```bash
+   ./sudo-run0.sh whoami
+   ```
 
 ## Usage
 
@@ -135,7 +157,7 @@ sudo -u www-data -c "cd /var/www && find . -name '*.php' | head -5"
 | `-i, --login` | Login shell with target user's environment | ✅ Full |
 | `-s, --shell` | Run shell as target user | ✅ Full |
 | `-H, --set-home` | Set HOME to target user's home directory | ✅ Full |
-| `-E, --preserve-env` | Preserve environment variables | ✅ Full (with safety filtering) |
+| `-E, --preserve-env` | Preserve environment variables | ✅ Full compatibility |
 | `--preserve-env=list` | Preserve specific variables | ✅ Full |
 | `-n, --non-interactive` | Non-interactive mode (fail if auth needed) | ✅ Full |
 | `-b, --background` | Run command in background | ✅ Full |
@@ -194,7 +216,7 @@ sudo -e file     # Use regular editor with sudo: sudo vim file
 - **Audit Trail**: Full logging through systemd journal
 
 ### Implementation Details
-- **Environment Parsing**: GNU AWK handles complex variable parsing
+- **Environment Preservation**: Uses run0's automatic value pickup for seamless compatibility
 - **Shell Detection**: Uses `getent` for robust user database queries
 - **Error Handling**: Comprehensive validation with sudo-compatible messages
 - **Modular Design**: 11 focused functions for maintainability
@@ -207,21 +229,23 @@ sudo -e file     # Use regular editor with sudo: sudo vim file
 3. **Environment differences**: Use `-E` or `--preserve-env` as needed
 4. **Script compatibility**: Most basic usage works unchanged
 
-### Environment Variable Filtering
-For safety, these variable types are filtered with `-E`:
-- System variables (PWD, SHLVL, PS1-4)
-- Complex path variables (*_PATH, *_DIRS) 
-- Variables with shell metacharacters
-- Variables longer than 200 characters
+## Technical Implementation
+
+This wrapper provides a compatibility layer that:
+
+- **Authentication**: Uses run0's polkit integration instead of sudo's authentication
+- **Environment Preservation**: Leverages run0's `--setenv=NAME` feature for automatic value pickup
+- **Security Model**: Maintains systemd's secure defaults while providing sudo compatibility
+- **Signal Handling**: Forwards signals appropriately to child processes
 
 ## Development
 
 ### Version History
-- **v1.6**: Fixed `-c` option, eliminated duplicate code, improved maintainability
-- **v1.5**: Added 9 new sudo options (72% compatibility achieved)
+- **v1.6**: Simplified environment handling, eliminated length limits and complex filtering
+- **v1.5**: Added 9 new sudo options (72% compatibility achieved), fixed `-c` option
 - **v1.4**: Enhanced error handling and input validation
 - **v1.3**: Enhanced error handling and input validation
-- **v1.2**: Robust environment parsing with AWK, modular architecture  
+- **v1.2**: Robust environment parsing, modular architecture  
 - **v1.1**: Environment preservation, proper login shell handling
 - **v1.0**: Basic sudo compatibility wrapper
 

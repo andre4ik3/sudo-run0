@@ -101,53 +101,36 @@ set_target_home() {
     fi
 }
 
-# Environment variable collection using awk for robust parsing
+# Environment variable collection using run0's automatic value pickup
 collect_env_vars() {
     local preserve_mode="$1"
     local specific_vars="$2"
     
     case "$preserve_mode" in
         "all")
-            # Use awk for robust environment variable parsing
-            env | awk -F= '
-            # Skip problematic variables that could break the command line
-            /^(PWD|OLDPWD|SHLVL|_|PS[1-4])=/ { next }
-            /^SUDO_/ { next }
-            /^(LS_COLORS|FZF_DEFAULT_OPTS|NIX_PROFILES)=/ { next }
-            /_(PATH|DIRS)=/ { next }
-            /^(INFOPATH|MANPATH|PKG_CONFIG_PATH|FONTCONFIG_FILE|GIO_EXTRA_MODULES)=/ { next }
-            /^XDG_/ { next }
-            
-            # For remaining variables, reconstruct properly
-            {
-                # Find first = to split key and value correctly
-                eq_pos = index($0, "=")
-                if (eq_pos > 0) {
-                    key = substr($0, 1, eq_pos - 1)
-                    value = substr($0, eq_pos + 1)
-                    
-                    # Skip if key is empty or value is too long
-                    if (key == "" || length(value) > 200) next
-                    
-                    # Skip values with problematic characters for the "all" mode
-                    if (match(value, /["'"'"'$`\\;|&()]/) || match(value, / /)) next
-                    
-                    printf " --setenv=%s=%s", key, value
-                }
-            }'
+            # Get all environment variables, excluding only the most problematic ones
+            # Use run0's --setenv=NAME feature which automatically picks up values
+            env | while IFS='=' read -r name value; do
+                # Skip variables that would interfere with the new environment
+                case "$name" in
+                    # Skip shell-specific variables that should be reset
+                    PWD|OLDPWD|SHLVL|_|PS1|PS2|PS3|PS4) continue ;;
+                    # Skip sudo-specific variables
+                    SUDO_*) continue ;;
+                    # Skip if name is empty (shouldn't happen, but be safe)
+                    "") continue ;;
+                    # Pass everything else using run0's automatic value pickup
+                    *) printf " --setenv=%s" "$name" ;;
+                esac
+            done
             ;;
         "specific")
-            # For specific variables, handle them more carefully with proper quoting
+            # Handle specific variables - much simpler now
             echo "$specific_vars" | tr ',' '\n' | while read -r var; do
                 # Remove whitespace
                 var=$(echo "$var" | tr -d ' \t')
-                if [ -n "$var" ]; then
-                    value=$(eval "printf '%s' \"\$$var\"" 2>/dev/null)
-                    if [ -n "$value" ]; then
-                        # Escape for shell safety
-                        escaped_value=$(printf '%s' "$value" | sed 's/\\/\\\\/g; s/"/\\"/g')
-                        printf ' --setenv=%s="%s"' "$var" "$escaped_value"
-                    fi
+                if [ -n "$var" ] && [ -n "$(eval "echo \${$var+x}")" ]; then
+                    printf " --setenv=%s" "$var"
                 fi
             done
             ;;
