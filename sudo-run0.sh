@@ -1,5 +1,4 @@
-#!/run/current-system/sw/bin/bash
-
+#!/bin/bash
 set -euo pipefail
 
 # sudo-run0: A compatibility wrapper around systemd's run0 utility
