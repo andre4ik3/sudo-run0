@@ -6,7 +6,10 @@ set -euo pipefail
 
 # Version and constants
 readonly VERSION="0.1.0"
-readonly USAGE="usage: sudo [-u user] [-g group] [-i] [-s] [-H] [-E] [--preserve-env[=list]] [-n] [-b] [-k] [-K] [-D directory] [-P] [-l] [-v] [-h] [-V] command [args...]"
+readonly USAGE="usage: sudo -h | -K | -k | -V
+usage: sudo -v [-nS] [-g group] [-u user]
+usage: sudo -l [-nS] [-g group] [-u user] [command [arg ...]]
+usage: sudo [-bEHnPS] [-D directory] [-g group] [-u user] [VAR=value] [-i | -s] [command [arg ...]]"
 
 # Global variables for parsed options
 declare -A OPTIONS=(
@@ -25,6 +28,7 @@ declare -A OPTIONS=(
     [working_directory]=""
     [preserve_groups]=false
     [ignore_env]=false
+    [target_home]=false
 )
 
 declare -a RUN0_ARGS
@@ -38,27 +42,32 @@ die() {
 
 show_help() {
     cat << 'EOF'
-usage: sudo [-u user] [-g group] [-i] [-s] [-H] [-E] [--preserve-env[=list]] [-n] [-b] [-k] [-K] [-c command] [-D directory] [-P] [-l] [-v] [-h] [-V] command [args...]
+sudo-run0 - execute a command as another user via systemd's run0 utility
+
+usage: sudo -h | -K | -k | -V
+usage: sudo -v [-nS] [-g group] [-u user]
+usage: sudo -l [-nS] [-g group] [-u user] [command [arg ...]]
+usage: sudo [-bEHnPS] [-D directory] [-g group] [-u user] [VAR=value] [-i | -s] [command [arg ...]]
 
 Options:
-  -u, --user USER               run command as specified user
-  -g, --group GROUP             run command as specified group
-  -i, --login                   run shell as target user's login shell
-  -s, --shell                   run shell as current user's shell
-  -H, --set-home                set HOME variable to target user's home directory
-  -E, --preserve-env            preserve all environment variables
-      --preserve-env=list       preserve specific environment variables (comma-separated)
-  -n, --non-interactive         non-interactive mode (fail if authentication needed)
-  -b, --background              run command in background
-  -k, --reset-timestamp         reset authentication timestamp
-  -K, --remove-timestamp        remove authentication timestamp
-  -c, --command=command         run command via shell
-  -D, --chdir=directory         change working directory before running command
-  -P, --preserve-groups         preserve supplementary group memberships
-  -l, --list                    list user's privileges
-  -v, --validate                update user's timestamp
-  -h, --help                    display this help message
-  -V, --version                 display version information
+  -b, --background              run command in the background
+  -D, --chdir=directory         change the working directory before running command
+  -E, --preserve-env            preserve user environment when running command
+      --preserve-env=list       preserve specific environment variables
+  -g, --group=group             run command as the specified group name or ID
+  -H, --set-home                set HOME variable to target user's home dir
+  -h, --help                    display help message and exit
+  -i, --login                   run login shell as the target user; a command may also be specified
+  -K, --remove-timestamp        remove timestamp file completely
+  -k, --reset-timestamp         invalidate timestamp file
+  -l, --list                    list user's privileges or check a specific command
+  -n, --non-interactive         non-interactive mode, no prompts are used
+  -P, --preserve-groups         preserve group vector instead of setting to target's
+  -s, --shell                   run shell as the target user; a command may also be specified
+  -u, --user=user               run command as specified user name or ID
+  -V, --version                 display version information and exit
+  -v, --validate                update user's timestamp without running a command
+  --                            stop processing command line arguments
 EOF
 }
 
@@ -105,8 +114,10 @@ collect_env_vars() {
                 local name="${line%%=*}"
                 # Skip variables that would interfere with the new environment
                 case "$name" in
-                    # Skip setting shell and home -- handled elsewhere
-                    SHELL|HOME) continue ;;
+                    # Skip setting caller's home if -H (set target user HOME) was specified
+                    HOME) [[ "${OPTIONS[target_home]}" == true ]] && continue ;;
+                    # Skip shell -- handled elsewhere
+                    SHELL) continue ;;
                     # Skip shell-specific variables that should be reset
                     PWD|OLDPWD|SHLVL|_|PS1|PS2|PS3|PS4|USER|LOGNAME) continue ;;
                     # Skip sudo-specific variables
@@ -141,6 +152,11 @@ collect_env_vars() {
             done
             ;;
     esac
+
+    # Always pass through caller's HOME unless -H (set target user HOME) is specified
+    if [[ "${OPTIONS[target_home]}" != true ]] && [[ -n "$HOME" ]]; then
+        printf " --setenv=HOME"
+    fi
 }
 
 # Handle special sudo modes
@@ -226,6 +242,7 @@ parse_arguments() {
                     die "you may not specify both the -i and -s options"
                 fi
                 OPTIONS[shell_target]=true
+                OPTIONS[target_home]=true
                 shift
                 ;;
             -s|--shell)
@@ -236,7 +253,7 @@ parse_arguments() {
                 shift
                 ;;
             -H|--set-home) 
-                # No-op since run0 sets HOME automatically
+                OPTIONS[target_home]=true
                 shift
                 ;;
             -E|--preserve-env)
@@ -344,6 +361,9 @@ build_run0_args() {
             eval "local env_array=($env_args)"
             RUN0_ARGS+=("${env_array[@]}")
         fi
+    elif [[ "${OPTIONS[target_home]}" != true ]] && [[ -n "$HOME" ]]; then
+        # If not preserving env but also not setting home, pass through HOME
+        RUN0_ARGS+=("--setenv=HOME")
     fi
 
     # Handle shell mode
