@@ -25,6 +25,7 @@ declare -A OPTIONS=(
     [shell_command]=""
     [working_directory]=""
     [preserve_groups]=false
+    [ignore_env]=false
 )
 
 declare -a RUN0_ARGS
@@ -215,8 +216,8 @@ validate_and_resolve_conflicts() {
 parse_arguments() {
     # Define short and long options
     # + prefix means stop at first non-option (critical for sudo behavior)
-    local short_opts="+u:g:c:D:isHEnbkKPlvhV"
-    local long_opts="user:,group:,command:,chdir:,login,shell,set-home,preserve-env::,non-interactive,background,reset-timestamp,remove-timestamp,preserve-groups,list,validate,help,version"
+    local short_opts="+u:g:c:D:isHEnbkKPlvhVI"
+    local long_opts="user:,group:,command:,chdir:,login,shell,set-home,preserve-env::,non-interactive,background,reset-timestamp,remove-timestamp,preserve-groups,list,validate,help,version,ignore-env"
     
     # Parse arguments using getopt
     local parsed_args
@@ -261,6 +262,9 @@ parse_arguments() {
             -s|--shell) OPTIONS[shell_mode]=true; shift ;;
             -H|--set-home) OPTIONS[set_home]=true; shift ;;
             -E|--preserve-env)
+                if [[ "${OPTIONS[ignore_env]}" == true ]]; then
+                    die "you may not specify both the -E and -I options"
+                fi
                 if [[ "$1" == "--preserve-env" && $# -gt 1 && "$2" != "--" ]]; then
                     # --preserve-env with a value (could be empty)
                     if [[ -z "$2" ]]; then
@@ -297,6 +301,13 @@ parse_arguments() {
             -P|--preserve-groups) OPTIONS[preserve_groups]=true; shift ;;
             -l|--list) OPTIONS[list_mode]=true; shift ;;
             -v|--validate) OPTIONS[validate_mode]=true; shift ;;
+            -I|--ignore-env)
+                if [[ -n "${OPTIONS[preserve_env]}" ]]; then
+                    die "you may not specify both the -E and -I options"
+                fi
+                OPTIONS[ignore_env]=true
+                shift
+                ;;
             --)
                 shift
                 break
