@@ -261,15 +261,28 @@ parse_arguments() {
             -s|--shell) OPTIONS[shell_mode]=true; shift ;;
             -H|--set-home) OPTIONS[set_home]=true; shift ;;
             -E|--preserve-env)
-                if [[ "$1" == "--preserve-env" && -n "$2" ]]; then
-                    # --preserve-env with separate argument (shouldn't happen with ::)
+                if [[ "$1" == "--preserve-env" && $# -gt 1 && "$2" != "--" ]]; then
+                    # --preserve-env with a value (could be empty)
+                    if [[ -z "$2" ]]; then
+                        # Empty value - this is an error
+                        printf "sudo: option '--preserve-env' requires a variable list\n" >&2
+                        printf "%s\n" "$USAGE" >&2
+                        exit 1
+                    fi
                     OPTIONS[preserve_env]="specific"
                     OPTIONS[preserve_env_vars]="$2"
                     shift 2
                 elif [[ "$1" == --preserve-env=* ]]; then
-                    # --preserve-env=list format
+                    # --preserve-env=list format (shouldn't happen after getopt processing)
+                    local env_list="${1#--preserve-env=}"
+                    if [[ -z "$env_list" ]]; then
+                        # Empty value - this is an error
+                        printf "sudo: option '--preserve-env' requires a variable list\n" >&2
+                        printf "%s\n" "$USAGE" >&2
+                        exit 1
+                    fi
                     OPTIONS[preserve_env]="specific"
-                    OPTIONS[preserve_env_vars]="${1#--preserve-env=}"
+                    OPTIONS[preserve_env_vars]="$env_list"
                     shift 1
                 else
                     # -E format (preserve all) or --preserve-env without argument
